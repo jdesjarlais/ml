@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+
+import numpy as np
+import time
+
+
+training_labels_file = "/Users/adesjarlais/devel/data/mnist/train-labels-idx1-ubyte"
+training_images_file = "/Users/adesjarlais/devel/data/mnist/train-images-idx3-ubyte"
+
+test_labels_file = "/Users/adesjarlais/devel/data/mnist/t10k-labels-idx1-ubyte"
+test_images_file = "/Users/adesjarlais/devel/data/mnist/t10k-images-idx3-ubyte"
+
+
+
+def get_training_labels():
+
+    with open(training_labels_file, "r") as f1:
+        header = np.fromfile(f1, dtype=np.dtype('>i4'), count=2)
+
+        magic_number = header[0]
+        item_count = header[1]
+        labels = np.fromfile(f1, dtype=np.ubyte, count=-1)
+
+        f1.close()
+
+        assert(magic_number == 2049)
+        assert(item_count == 60000)
+        assert(labels.size == item_count)
+
+        return labels
+
+def get_training_images():
+    with open(training_images_file, "r") as f1:
+        header = np.fromfile(f1, dtype=np.dtype('>i4'), count=4)
+
+        magic_number = header[0]
+        item_count = header[1]
+        num_rows = header[2]
+        num_columns = header[3]
+        pixels_per_image = num_rows * num_columns
+        images_bytes = np.fromfile(f1, dtype=np.ubyte, count=-1)
+
+        f1.close()
+
+        assert(magic_number == 2051)
+        assert(item_count == 60000)
+        assert(num_rows == 28)
+        assert(num_columns == 28)
+        assert(images_bytes.size == item_count * num_rows * num_columns)
+
+        images = np.reshape(images_bytes, (item_count, num_rows * num_columns))
+
+        return images
+
+def softmax(x):
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum(axis=0)
+
+def inference(model, input):
+    output = input
+    for layer in model:
+        output = np.matmul(output, layer)
+        output = softmax(output)
+    return output
+
+
+training_labels = get_training_labels()
+training_images = get_training_images()
+
+input = training_images[0]
+model = [np.random.rand(784, 600), np.random.rand(600, 400), np.random.rand(400, 200), np.random.rand(200, 10)]
+output = inference(model, input)
+
+
+
+
+# Need to compute the rate of change of the cost function against each element in the last array in the model
+
+
+
+
+
+# input is 1 x 784
+# output 10 x 1
+#
+#
+#
+# Style 1:
+#   - activation function: soft max
+#   - 4 hidden layers
+#       - 784 x 600
+#       - 600 x 400
+#       - 400 x 200
+#       - 200 x 10
+#
+#
+#
+# Style 2:
+#   - activation function: soft max
+#   - 4 hidden layers
+#       - 784 x 261
+#       - 261 x 87
+#       - 87 x 29
+#       - 29 x 10
+#
+#
+
+
+#class Model:
+#
+#    layers
+#    activations

@@ -3,6 +3,8 @@
 import numpy as np
 import time
 
+
+
 ######### SETTINGS #########
 training_example_count = 60000
 test_example_count = 10000
@@ -113,7 +115,7 @@ def validate_model(model_params, training_inputs, training_labels, test_inputs, 
 
 
 
-
+# Pull in training and test inputs and labels
 training_labels = get_labels_from_file(training_labels_file)[:training_example_count]
 training_images = get_conformed_images_from_file(training_images_file)[:training_example_count]
 training_input_size = training_images.shape[1]
@@ -123,6 +125,7 @@ test_images = get_conformed_images_from_file(test_images_file)[:test_example_cou
 test_input_size = test_images.shape[1]
 
 
+# Initialize global variables for the model training
 model_params = np.zeros(training_input_size)
 cached_inference_losses = np.zeros(training_batch_size)
 training_index_set = np.arange(training_example_count)
@@ -132,14 +135,17 @@ test_index_set = np.arange(test_example_count)
 start_time = time.time()
 for gd_iteration in range(gradient_descent_iterations):
 
+    # Create randomized batches of size training_batch_size from the training data/labels
     training_batch_indices = np.random.choice(training_index_set, size=training_batch_size, replace=False)
     batch_training_inputs = np.take(training_images, training_batch_indices, axis=0)
     batch_training_labels = np.take(training_labels, training_batch_indices, axis=0)
 
+    # Create randomized batches of size test_batch_size from the test data/labels
     test_batch_indices = np.random.choice(test_index_set, size=test_batch_size, replace=False)
     batch_test_inputs = np.take(test_images, test_batch_indices, axis=0)
     batch_test_labels = np.take(test_labels, test_batch_indices, axis=0)
 
+    # Run the model across the training and test batch, caching the model loss values (later to be used for the gradient descent).
     cached_inference_losses = validate_model(model_params, batch_training_inputs, batch_training_labels, batch_test_inputs, batch_test_labels)
 
     # Perform gradient descent

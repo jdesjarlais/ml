@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+
+# Trains a linear regression model using gradient descent on the mnist data set.
+
 import numpy as np
 import time
 

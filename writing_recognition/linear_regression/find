@@ -13,6 +13,10 @@ training_images_file = "/Users/adesjarlais/devel/data/mnist/train-images-idx3-ub
 
 test_labels_file = "/Users/adesjarlais/devel/data/mnist/t10k-labels-idx1-ubyte"
 test_images_file = "/Users/adesjarlais/devel/data/mnist/t10k-images-idx3-ubyte"
+
+model_save_file = "/Users/adesjarlais/devel/data/models/writing_recognition/linear_regression/model"
+save_model = False
+use_saved_model = True
 ############################
 
 
@@ -108,6 +112,12 @@ def validate_model(model_params, training_inputs, training_labels, test_inputs, 
 
     return training_losses
 
+def save_model(model_params, output_file_path):
+    np.savetxt(output_file_path, model_params, fmt="%20.20f")
+
+def load_model(file_path):
+    return np.loadtxt(file_path, dtype=float)
+
 
 
 # Pull in training and test inputs and labels
@@ -121,15 +131,23 @@ test_images = get_conformed_images_from_file(test_images_file)
 # Find the optimum model_params using the normal equation
 start_time = time.time()
 
-training_images_transpose = np.transpose(training_images)
+model_params = 0
+if use_saved_model:
+    model_params = load_model(model_save_file)
+else:
 
-model_params = np.matmul(training_images_transpose, training_images)
-model_params = np.linalg.pinv(model_params)
-model_params = np.matmul(model_params, training_images_transpose)
-model_params = np.matmul(model_params, training_labels)
+    training_images_transpose = np.transpose(training_images)
+
+    model_params = np.matmul(training_images_transpose, training_images)
+    model_params = np.linalg.pinv(model_params)
+    model_params = np.matmul(model_params, training_images_transpose)
+    model_params = np.matmul(model_params, training_labels)
 
 
 validate_model(model_params, training_images, training_labels, test_images, test_labels)
+
+if save_model:
+    save_model(model_params, model_save_file)
 
 # Print losses one last time
 print("Complete.")

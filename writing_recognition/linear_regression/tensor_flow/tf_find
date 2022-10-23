@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+
+# Finds a linear regression model using the normal equation for the mnist date set.
+
+import numpy as np
+import time
+import tensorflow as tf
+
+
+
+######### SETTINGS #########
+training_labels_file = "/Users/adesjarlais/devel/data/mnist/train-labels-idx1-ubyte"
+training_images_file = "/Users/adesjarlais/devel/data/mnist/train-images-idx3-ubyte"
+
+test_labels_file = "/Users/adesjarlais/devel/data/mnist/t10k-labels-idx1-ubyte"
+test_images_file = "/Users/adesjarlais/devel/data/mnist/t10k-images-idx3-ubyte"
+
+model_save_file = "/Users/adesjarlais/devel/data/models/writing_recognition/linear_regression/model"
+save_model = False
+use_saved_model = False
+############################
+
+
+
+def get_labels_from_file(file):
+
+    with open(file, "r") as f1:
+        header = np.fromfile(f1, dtype=np.dtype('>i4'), count=2)
+
+        magic_number = header[0]
+        item_count = header[1]
+        labels = np.fromfile(f1, dtype=np.ubyte, count=-1)
+
+        f1.close()
+
+        assert(magic_number == 2049)
+        assert(labels.size == item_count)
+
+        return labels
+
+def get_images_from_file(file):
+    with open(file, "r") as f1:
+        header = np.fromfile(f1, dtype=np.dtype('>i4'), count=4)
+
+        magic_number = header[0]
+        item_count = header[1]
+        num_rows = header[2]
+        num_columns = header[3]
+        pixels_per_image = num_rows * num_columns
+        images_bytes = np.fromfile(f1, dtype=np.ubyte, count=-1)
+
+        f1.close()
+
+        assert(magic_number == 2051)
+        assert(num_rows == 28)
+        assert(num_columns == 28)
+        assert(images_bytes.size == item_count * num_rows * num_columns)
+
+        images = np.reshape(images_bytes, (item_count, num_rows * num_columns))
+
+        return images
+
+
+def inference(input, model_params):
+    output_array = np.multiply(input, model_params)
+    output = np.sum(output_array)
+
+    return output
+
+def conform_training_image(image):
+    model_input = image * 1.0/255.0
+    model_input = np.insert(model_input, 0, 1)
+
+    return model_input
+
+def get_conformed_images_from_file(file):
+    images = get_images_from_file(file)
+
+    model_inputs = np.zeros((images.shape[0], images.shape[1] + 1))
+    for image_index in range(images.shape[0]):
+        model_inputs[image_index] = conform_training_image(images[image_index])
+
+    return model_inputs
+
+def batch_inference(model_params, input, labels):
+    input_count = input.shape[0]
+
+    model_outputs = np.multiply(input, model_params)
+    model_outputs = np.sum(model_outputs, axis=1)
+
+    model_losses = np.subtract(model_outputs, labels)
+    model_loss = np.mean(model_losses)
+
+    model_loss_mses = model_losses ** 2
+    model_loss_mse = np.mean(model_loss_mses)
+
+    classified_outputs = np.clip(model_outputs, 0, 9)
+    classified_outputs = np.round_(classified_outputs, decimals=0)
+
+    correct_inferences = classified_outputs == labels
+    total_correct = np.sum(correct_inferences)
+    accuracy = total_correct/input_count
+
+    return (model_losses, model_loss, model_loss_mse, accuracy)
+
+def validate_model(model_params, training_inputs, training_labels, test_inputs, test_labels):
+    training_losses, avg_training_loss, avg_training_mse, avg_training_accuracy = batch_inference(model_params, training_inputs, training_labels)
+    test_losses, avg_test_loss, avg_test_mse, avg_test_accuracy = batch_inference(model_params, test_inputs, test_labels)
+
+    print(f"TRAINING:\tLoss: {avg_training_mse:.2f}\t\t\tAccuracy: {avg_training_accuracy:.2f}")
+    print(f"TEST:\t\tLoss: {avg_test_mse:.2f}\t\t\tAccuracy: {avg_test_accuracy:.2f}")
+    print("")
+
+    return training_losses
+
+def save_model(model_params, output_file_path):
+    np.savetxt(output_file_path, model_params, fmt="%20.20f")
+
+def load_model(file_path):
+    return np.loadtxt(file_path, dtype=float)
+
+
+
+# Pull in training and test inputs and labels
+training_labels = get_labels_from_file(training_labels_file)
+training_images = get_conformed_images_from_file(training_images_file)
+
+test_labels = get_labels_from_file(test_labels_file)
+test_images = get_conformed_images_from_file(test_images_file)
+
+# TODO: convert inference, batch inference functions to tf
+# TODO: read in directly to tensors
+# TODO: save/load with tf
+# TODO: try playing with _is_sparse (check for perf improvements)
+# TODO: try playing with dtype of tensor (check for perf improvements)
+# TODO: try lazy vs eager computation graph thing
+# TODO: try calculating transpose X first and sharing it
+
+tf_training_inputs = tf.convert_to_tensor(training_images, dtype=tf.float32)
+tf_training_labels = tf.convert_to_tensor(training_labels, dtype=tf.int32)
+
+tf_test_inputs = tf.convert_to_tensor(test_images, dtype=tf.float32)
+tf_test_labels = tf.convert_to_tensor(test_labels, dtype=tf.int32)
+
+model_params = 0
+if use_saved_model:
+    model_params = load_model(model_save_file)
+    model_params = tf.convert_to_tensor(model_params, dtype=tf.float64)
+else:
+    model_params = tf.linalg.matmul(tf_training_inputs, tf_training_inputs, transpose_a=True)
+    model_params = tf.linalg.pinv(model_params)
+    model_params = tf.linalg.matmul(model_params, tf_training_inputs, transpose_b=True)
+#    model_params = tf.linalg.matmul(model_params, tf_training_labels)
+
+    print(model_params)
+    print(model_params.shape)
+
+#
+#
+#    model_params = tf.linalg.matmul(tf_training_inputs, tf_training_inputs, transpose_a=True, a_is_sparse=True, b_is_sparse=True)
+#    model_params = tf.linalg.pinv(model_params)
+#    model_params = tf.linalg.matmul(model_params, tf_training_inputs, transpose_b=True, b_is_sparse=True)
+#    print(model_params.shape)
+#    print(tf_training_labels.shape)
+#    model_params = tf.linalg.matmul(model_params, tf_training_labels, transpose_a=True, transpose_b=False, b_is_sparse=True)
+#
+#    print(model_params)
+#    print(model_params.shape)
+
+
+exit(0)
+
+# Find the optimum model_params using the normal equation
+start_time = time.time()
+
+model_params = 0
+if use_saved_model:
+    model_params = load_model(model_save_file)
+else:
+
+    training_images_transpose = np.transpose(training_images)
+
+    model_params = np.matmul(training_images_transpose, training_images)
+    model_params = np.linalg.pinv(model_params)
+    model_params = np.matmul(model_params, training_images_transpose)
+    model_params = np.matmul(model_params, training_labels)
+
+
+validate_model(model_params, training_images, training_labels, test_images, test_labels)
+
+if save_model:
+    save_model(model_params, model_save_file)
+
+# Print losses one last time
+print("Complete.")
+print("FINAL RESULTS:")
+
+end_time = time.time()
+print("Total execution time: {:.2f}".format(end_time - start_time))

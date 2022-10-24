@@ -4,6 +4,7 @@
 
 import numpy as np
 import time
+import tensorflow as tf
 
 
 
@@ -14,7 +15,7 @@ training_images_file = "/Users/adesjarlais/devel/data/mnist/train-images-idx3-ub
 test_labels_file = "/Users/adesjarlais/devel/data/mnist/t10k-labels-idx1-ubyte"
 test_images_file = "/Users/adesjarlais/devel/data/mnist/t10k-images-idx3-ubyte"
 
-model_save_file = "/Users/adesjarlais/devel/data/models/writing_recognition/linear_regression/model.np"
+model_save_file = "/Users/adesjarlais/devel/data/models/writing_recognition/linear_regression/model.tf"
 save_model = False
 use_saved_model = False
 ############################
@@ -127,6 +128,47 @@ training_images = get_conformed_images_from_file(training_images_file)
 test_labels = get_labels_from_file(test_labels_file)
 test_images = get_conformed_images_from_file(test_images_file)
 
+# TODO: convert inference, batch inference functions to tf
+# TODO: read in directly to tensors
+# TODO: save/load with tf
+# TODO: try playing with _is_sparse (check for perf improvements)
+# TODO: try playing with dtype of tensor (check for perf improvements)
+# TODO: try lazy vs eager computation graph thing
+# TODO: try calculating transpose X first and sharing it
+
+tf_training_inputs = tf.convert_to_tensor(training_images, dtype=tf.float32)
+tf_training_labels = tf.convert_to_tensor(training_labels, dtype=tf.int32)
+
+tf_test_inputs = tf.convert_to_tensor(test_images, dtype=tf.float32)
+tf_test_labels = tf.convert_to_tensor(test_labels, dtype=tf.int32)
+
+model_params = 0
+if use_saved_model:
+    model_params = load_model(model_save_file)
+    model_params = tf.convert_to_tensor(model_params, dtype=tf.float64)
+else:
+    model_params = tf.linalg.matmul(tf_training_inputs, tf_training_inputs, transpose_a=True)
+    model_params = tf.linalg.pinv(model_params)
+    model_params = tf.linalg.matmul(model_params, tf_training_inputs, transpose_b=True)
+#    model_params = tf.linalg.matmul(model_params, tf_training_labels)
+
+    print(model_params)
+    print(model_params.shape)
+
+#
+#
+#    model_params = tf.linalg.matmul(tf_training_inputs, tf_training_inputs, transpose_a=True, a_is_sparse=True, b_is_sparse=True)
+#    model_params = tf.linalg.pinv(model_params)
+#    model_params = tf.linalg.matmul(model_params, tf_training_inputs, transpose_b=True, b_is_sparse=True)
+#    print(model_params.shape)
+#    print(tf_training_labels.shape)
+#    model_params = tf.linalg.matmul(model_params, tf_training_labels, transpose_a=True, transpose_b=False, b_is_sparse=True)
+#
+#    print(model_params)
+#    print(model_params.shape)
+
+
+exit(0)
 
 # Find the optimum model_params using the normal equation
 start_time = time.time()

@@ -3,9 +3,8 @@
 # Finds a linear regression model using the normal equation for the mnist date set.
 
 import numpy as np
+import torch
 import time
-import tensorflow as tf
-
 
 
 ######### SETTINGS #########
@@ -15,8 +14,8 @@ training_images_file = "/Users/adesjarlais/devel/data/mnist/train-images-idx3-ub
 test_labels_file = "/Users/adesjarlais/devel/data/mnist/t10k-labels-idx1-ubyte"
 test_images_file = "/Users/adesjarlais/devel/data/mnist/t10k-images-idx3-ubyte"
 
-model_save_file = "/Users/adesjarlais/devel/data/models/writing_recognition/linear_regression/model"
-save_model = False
+model_save_file = "/Users/adesjarlais/devel/data/models/writing_recognition/linear_regression/model.pt"
+save_model = True
 use_saved_model = False
 ############################
 
@@ -60,13 +59,6 @@ def get_images_from_file(file):
 
         return images
 
-
-def inference(input, model_params):
-    output_array = np.multiply(input, model_params)
-    output = np.sum(output_array)
-
-    return output
-
 def conform_training_image(image):
     model_input = image * 1.0/255.0
     model_input = np.insert(model_input, 0, 1)
@@ -85,20 +77,20 @@ def get_conformed_images_from_file(file):
 def batch_inference(model_params, input, labels):
     input_count = input.shape[0]
 
-    model_outputs = np.multiply(input, model_params)
-    model_outputs = np.sum(model_outputs, axis=1)
+    model_outputs = input * model_params
+    model_outputs = torch.sum(model_outputs, 1)
 
-    model_losses = np.subtract(model_outputs, labels)
-    model_loss = np.mean(model_losses)
+    model_losses = model_outputs - labels
+    model_loss = torch.mean(model_losses)
 
-    model_loss_mses = model_losses ** 2
-    model_loss_mse = np.mean(model_loss_mses)
+    model_loss_mses = torch.pow(model_losses, 2)
+    model_loss_mse = torch.mean(model_loss_mses)
 
-    classified_outputs = np.clip(model_outputs, 0, 9)
-    classified_outputs = np.round_(classified_outputs, decimals=0)
+    classified_outputs = torch.clip(model_outputs, min=0, max=9)
+    classified_outputs = torch.round(classified_outputs, decimals=0)
 
-    correct_inferences = classified_outputs == labels
-    total_correct = np.sum(correct_inferences)
+    correct_inferences = torch.eq(classified_outputs, labels)
+    total_correct = torch.sum(correct_inferences)
     accuracy = total_correct/input_count
 
     return (model_losses, model_loss, model_loss_mse, accuracy)
@@ -114,9 +106,10 @@ def validate_model(model_params, training_inputs, training_labels, test_inputs, 
     return training_losses
 
 def save_model(model_params, output_file_path):
-    np.savetxt(output_file_path, model_params, fmt="%20.20f")
+    torch.save(model_params, output_file_path)
 
 def load_model(file_path):
+    return torch.load(file_path)
     return np.loadtxt(file_path, dtype=float)
 
 
@@ -128,65 +121,38 @@ training_images = get_conformed_images_from_file(training_images_file)
 test_labels = get_labels_from_file(test_labels_file)
 test_images = get_conformed_images_from_file(test_images_file)
 
-# TODO: convert inference, batch inference functions to tf
-# TODO: read in directly to tensors
-# TODO: save/load with tf
-# TODO: try playing with _is_sparse (check for perf improvements)
-# TODO: try playing with dtype of tensor (check for perf improvements)
-# TODO: try lazy vs eager computation graph thing
-# TODO: try calculating transpose X first and sharing it
 
-tf_training_inputs = tf.convert_to_tensor(training_images, dtype=tf.float32)
-tf_training_labels = tf.convert_to_tensor(training_labels, dtype=tf.int32)
+pt_training_inputs = torch.from_numpy(training_images).float()
+pt_training_labels = torch.from_numpy(training_labels)
 
-tf_test_inputs = tf.convert_to_tensor(test_images, dtype=tf.float32)
-tf_test_labels = tf.convert_to_tensor(test_labels, dtype=tf.int32)
+pt_test_inputs = torch.from_numpy(test_images).float()
+pt_test_labels = torch.from_numpy(test_labels)
 
-model_params = 0
-if use_saved_model:
-    model_params = load_model(model_save_file)
-    model_params = tf.convert_to_tensor(model_params, dtype=tf.float64)
-else:
-    model_params = tf.linalg.matmul(tf_training_inputs, tf_training_inputs, transpose_a=True)
-    model_params = tf.linalg.pinv(model_params)
-    model_params = tf.linalg.matmul(model_params, tf_training_inputs, transpose_b=True)
-#    model_params = tf.linalg.matmul(model_params, tf_training_labels)
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+print(f"Using device: {device}")
 
-    print(model_params)
-    print(model_params.shape)
+pt_training_inputs.to(device)
+pt_training_labels.to(device)
 
-#
-#
-#    model_params = tf.linalg.matmul(tf_training_inputs, tf_training_inputs, transpose_a=True, a_is_sparse=True, b_is_sparse=True)
-#    model_params = tf.linalg.pinv(model_params)
-#    model_params = tf.linalg.matmul(model_params, tf_training_inputs, transpose_b=True, b_is_sparse=True)
-#    print(model_params.shape)
-#    print(tf_training_labels.shape)
-#    model_params = tf.linalg.matmul(model_params, tf_training_labels, transpose_a=True, transpose_b=False, b_is_sparse=True)
-#
-#    print(model_params)
-#    print(model_params.shape)
+pt_test_inputs.to(device)
+pt_test_labels.to(device)
 
-
-exit(0)
 
 # Find the optimum model_params using the normal equation
 start_time = time.time()
 
-model_params = 0
 if use_saved_model:
     model_params = load_model(model_save_file)
 else:
+    training_inputs_transpose = torch.transpose(pt_training_inputs, 0, 1)
 
-    training_images_transpose = np.transpose(training_images)
-
-    model_params = np.matmul(training_images_transpose, training_images)
-    model_params = np.linalg.pinv(model_params)
-    model_params = np.matmul(model_params, training_images_transpose)
-    model_params = np.matmul(model_params, training_labels)
+    model_params = torch.matmul(training_inputs_transpose, pt_training_inputs)
+    model_params = torch.linalg.pinv(model_params)
+    model_params = torch.matmul(model_params, training_inputs_transpose)
+    model_params = torch.matmul(model_params, pt_training_labels.float())
 
 
-validate_model(model_params, training_images, training_labels, test_images, test_labels)
+validate_model(model_params, pt_training_inputs, pt_training_labels, pt_test_inputs, pt_test_labels)
 
 if save_model:
     save_model(model_params, model_save_file)

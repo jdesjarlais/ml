@@ -23,7 +23,7 @@ training_images_file = "/Users/adesjarlais/devel/data/mnist/train-images-idx3-ub
 test_labels_file = "/Users/adesjarlais/devel/data/mnist/t10k-labels-idx1-ubyte"
 test_images_file = "/Users/adesjarlais/devel/data/mnist/t10k-images-idx3-ubyte"
 
-model_save_file = "/Users/adesjarlais/devel/data/models/writing_recognition/linear_regression/model"
+model_save_file = "/Users/adesjarlais/devel/data/models/writing_recognition/linear_regression/model.np"
 save_model = True
 use_saved_model = True
 ############################

@@ -14,7 +14,7 @@ from torch.utils.data import Dataset, DataLoader
 ######### SETTINGS #########
 should_train = True
 learning_rate = 0.07
-epochs = 200
+epochs = 500
 training_batch_size = 60000
 
 training_labels_file = "/Users/adesjarlais/devel/data/mnist/train-labels-idx1-ubyte"
@@ -298,7 +298,7 @@ print(f"Using device: {device}")
 input_transform = transforms.Compose([
     PrependConstant(255),
     ToTensor(),
-    Normalize(input_min=0, input_max=255, output_min=0.0, output_max=9.0)
+    Normalize(input_min=0, input_max=255, output_min=0.0, output_max=1.0)
 ])
 
 label_transform = transforms.Compose([
@@ -323,11 +323,11 @@ params = model.parameters()
 loss_function = torch.nn.CrossEntropyLoss()
 #optimizer = CustomSGDOptimizer(params, lr=learning_rate)
 #optimizer = torch.optim.SGD(params, lr=learning_rate)
-optimizer = torch.optim.Adadelta(params, lr=0.1, rho=0.9, eps=1e-06, weight_decay=0)
+#optimizer = torch.optim.Adadelta(params, lr=0.1, rho=0.9, eps=1e-06, weight_decay=0)
 #optimizer = torch.optim.Adagrad(params, lr=0.01, lr_decay=0, weight_decay=0, initial_accumulator_value=0, eps=1e-10) 
 #optimizer = torch.optim.Adam(params, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
 #optimizer = torch.optim.AdamW(params, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.01, amsgrad=False)
-#optimizer = torch.optim.Adamax(params, lr=0.002, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+optimizer = torch.optim.Adamax(params, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
 #optimizer = torch.optim.ASGD(params, lr=0.01, lambd=0.0001, alpha=0.75, t0=1000000.0, weight_decay=0)
 
 if use_saved_model:

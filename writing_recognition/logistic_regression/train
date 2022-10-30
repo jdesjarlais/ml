@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+
+# Trains a logistic regression model using the normal equation for the mnist date set.
+
+import numpy as np
+import torch
+import time
+from typing import List, Optional
+
+from torchvision import transforms, utils
+from torch.utils.data import Dataset, DataLoader
+
+
+######### SETTINGS #########
+should_train = True
+learning_rate = 0.07
+epochs = 10000
+training_batch_size = 400
+test_batch_size = 100
+
+training_labels_file = "/Users/adesjarlais/devel/data/mnist/train-labels-idx1-ubyte"
+training_images_file = "/Users/adesjarlais/devel/data/mnist/train-images-idx3-ubyte"
+
+test_labels_file = "/Users/adesjarlais/devel/data/mnist/t10k-labels-idx1-ubyte"
+test_images_file = "/Users/adesjarlais/devel/data/mnist/t10k-images-idx3-ubyte"
+
+model_save_file = "/Users/adesjarlais/devel/data/models/writing_recognition/logistic_regression/model.pt"
+save_model = True
+use_saved_model = False
+############################
+
+
+
+# Transforms
+
+class Normalize(object):
+    """Normalize a tensor to a min/max range."""
+
+    __input_range = 1.0
+    __output_range = 1.0
+
+    def __init__(self, input_min, input_max, output_min=0.0, output_max=1.0):
+        self.input_min = input_min
+        self.__input_range = input_max - input_min
+
+        self.output_min = output_min
+        self.__output_range = output_max - output_min
+
+    def __call__(self, sample):
+        assert(type(sample) is torch.Tensor)
+
+        normalized_sample = (sample - self.input_min)/self.__input_range
+        return (normalized_sample * self.__output_range) + self.output_min
+
+class ToTensor(object):
+    """Convert ndarrays in sample to Tensors."""
+
+    def __call__(self, sample):
+        tensor = None
+        if type(sample) is np.ndarray:
+            tensor = torch.from_numpy(sample)
+        else:
+            tensor = torch.Tensor([sample])
+        return tensor
+
+class PrependConstant(object):
+    """Insert a single constant at the beginning of a tensor"""
+
+    def __init__(self, constant):
+        self.constant = constant
+
+    def __call__(self, sample):
+        assert(type(sample) is np.ndarray)
+
+        images = np.insert(sample, 0, self.constant, axis=-1)
+        return images
+
+class ToOneHot(object):
+    """Converts a constant or list of constants to a one hot array"""
+
+    def __init__(self, num_classes):
+        self.num_classes = num_classes
+
+    def __call__(self, sample):
+        output = None
+        if type(sample) is np.ndarray:
+
+            output = torch.zeros((sample.shape[0], self.num_classes))
+            for i in range(sample.shape[0]):
+                hot_index = sample[i]
+                output[i][hot_index] = 1
+        elif type(sample) is torch.Tensor:
+            output = torch.zeros((sample.shape[0], self.num_classes))
+            for i in range(sample.shape[0]):
+                output[i][sample] = 1
+        else:
+            output = torch.zeros(self.num_classes)
+            output[sample] = 1
+        return output
+
+
+
+# Datasets
+
+class MNISTDataset(Dataset):
+
+    images_file_path = None
+    labels_file_path = None
+
+    image_size = None
+
+    __has_been_loaded = False
+
+    __len = None
+    __images = None
+    __labels = None
+
+    def __init__(self, images_file_path, labels_file_path, input_transform=None, label_transform=None):
+        self.images_file_path = images_file_path
+        self.labels_file_path = labels_file_path
+
+        self.input_transform = input_transform
+        self.label_transform = label_transform
+
+    def __len__(self):
+        self.__load_data_set_if_needed()
+
+        return self.__len
+
+    def __getitem__(self, idx):
+        self.__load_data_set_if_needed()
+
+        image = self.__images[idx]
+        if self.input_transform:
+            image = self.input_transform(image)
+
+        label = self.__labels[idx]
+        if self.label_transform:
+            label = self.label_transform(label)
+
+        return image, label
+
+    def __load_data_set_if_needed(self):
+        if not self.__has_been_loaded:
+            self.__load_data_set()
+
+    def __load_data_set(self):
+        assert(not self.__has_been_loaded)
+
+        self.__has_been_loaded = True
+
+        with open(self.images_file_path, "r") as images_file:
+            header = np.fromfile(images_file, dtype=np.dtype('>i4'), count=4)
+
+            magic_number = header[0]
+            item_count = header[1]
+            num_rows = header[2]
+            num_columns = header[3]
+            pixels_per_image = num_rows * num_columns
+            images_bytes = np.fromfile(images_file, dtype=np.ubyte, count=-1)
+
+            images_file.close()
+
+            assert(magic_number == 2051)
+            assert(num_rows == 28)
+            assert(num_columns == 28)
+            assert(images_bytes.size == item_count * num_rows * num_columns)
+
+            images = np.reshape(images_bytes, (item_count, -1))
+
+            # TODO: is there a way to apply Transforms to a list or inputs
+
+            self.image_size = num_rows * num_columns
+            self.__images = images
+
+        with open(self.labels_file_path, "r") as labels_file:
+            header = np.fromfile(labels_file, dtype=np.dtype('>i4'), count=2)
+
+            magic_number = header[0]
+            item_count = header[1]
+            labels = np.fromfile(labels_file, dtype=np.ubyte, count=-1)
+
+            labels_file.close()
+
+            assert(magic_number == 2049)
+            assert(labels.size == item_count)
+
+            self.__labels = labels
+
+        assert(self.__images.shape[0] == self.__labels.shape[0])
+
+        self.__len = self.__images.shape[0]
+
+
+# Model
+
+class LogisticRegressionModel(torch.nn.Module):
+
+    def __init__(self, input_size, output_size):
+        super(LogisticRegressionModel, self).__init__()
+
+        self.linear = torch.nn.Linear(input_size, output_size)
+        self.activation = torch.nn.Sigmoid()
+
+    def forward(self, x):
+        x = self.linear(x)
+        x = self.activation(x)
+        return x
+
+
+# Loss Function
+
+class CustomMSELoss(torch.nn.Module):
+    def __init__(self):
+        super(CustomMSELoss, self).__init__();
+
+    def forward(self, predictions, target):
+        square_difference = torch.square(predictions - target)
+        loss_value = torch.mean(square_difference)
+        return loss_value
+
+class CustomSGDOptimizer(torch.optim.Optimizer):
+
+    def __init__(self, params, lr=0.001):
+        defaults = dict(lr=lr)
+        super(CustomSGDOptimizer, self).__init__(params, defaults)
+
+    def step(self, closure=None):
+        loss = None
+
+        for group in self.param_groups:
+            lr = group['lr']
+            params_with_grad = []
+            d_p_list = []
+
+            for p in group['params']:
+                if p.grad is not None:
+                    params_with_grad.append(p)
+                    d_p_list.append(p.grad)
+            
+            with torch.no_grad():
+                for params, d_p in zip(params_with_grad, d_p_list):
+                    torch.Tensor.add_(params, d_p, alpha=-lr)
+
+        return loss
+
+            
+# Functions
+ 
+def save_model(model_params, output_file_path):
+    torch.save(model_params, output_file_path)
+
+def load_model(file_path):
+    return torch.load(file_path)
+    return np.loadtxt(file_path, dtype=float)
+
+def compute_model_accuracy(model, dataset):
+    accuracy = 0
+    with torch.no_grad():
+        model.eval()
+
+        inputs, labels = dataset[:]
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+
+        outputs = model(inputs)
+
+        predicted_value = torch.argmax(outputs, dim=1)
+        actual_value = torch.argmax(labels, dim=1)
+        correct_values = torch.eq(predicted_value, actual_value)
+        total_correct = torch.sum(correct_values).item()
+
+        accuracy = total_correct/inputs.shape[0]
+
+    return accuracy
+
+def compute_model_loss(model, inputs, labels):
+    inputs = inputs.to(device)
+    labels = labels.to(device).float()
+
+    outputs = logistic_regression_model(inputs)
+    losses = loss_function(outputs, labels)
+
+    return losses
+
+
+
+# Training
+
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+print(f"Using device: {device}")
+
+
+input_transform = transforms.Compose([
+    PrependConstant(255),
+    ToTensor(),
+    Normalize(input_min=0, input_max=255, output_min=0.0, output_max=9.0)
+])
+
+label_transform = transforms.Compose([
+    ToOneHot(10)
+])
+
+mnist_train_dataset = MNISTDataset(images_file_path=training_images_file,
+                                   labels_file_path=training_labels_file,
+                                   input_transform=input_transform,
+                                   label_transform=label_transform)
+mnist_test_dataset = MNISTDataset(images_file_path=test_images_file,
+                                  labels_file_path=test_labels_file,
+                                  input_transform=input_transform,
+                                  label_transform=label_transform)
+
+mnist_train_dataloader = DataLoader(mnist_train_dataset, batch_size=training_batch_size, shuffle=True, num_workers=0)
+mnist_test_dataloader = DataLoader(mnist_test_dataset, batch_size=test_batch_size, shuffle=True, num_workers=0)
+
+logistic_regression_model = LogisticRegressionModel(input_size=mnist_train_dataset.image_size + 1, output_size=10).to(device)
+params = logistic_regression_model.parameters()
+loss_function = CustomMSELoss()
+optimizer = CustomSGDOptimizer(params, lr=learning_rate)
+#optimizer = torch.optim.SGD(params, lr=learning_rate)
+#optimizer = torch.optim.Adadelta(params, lr=1.0, rho=0.9, eps=1e-06, weight_decay=0)
+#optimizer = torch.optim.Adagrad(params, lr=0.01, lr_decay=0, weight_decay=0, initial_accumulator_value=0, eps=1e-10) 
+#optimizer = torch.optim.Adam(params, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
+#optimizer = torch.optim.AdamW(params, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.01, amsgrad=False)
+#optimizer = torch.optim.Adamax(params, lr=0.002, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+#optimizer = torch.optim.ASGD(params, lr=0.01, lambd=0.0001, alpha=0.75, t0=1000000.0, weight_decay=0)
+
+
+
+start_time = time.time()
+for epoch in range(epochs):
+    for i, (inputs, labels) in enumerate(mnist_train_dataloader):
+        logistic_regression_model.train()
+        optimizer.zero_grad()
+
+        losses = compute_model_loss(logistic_regression_model, inputs, labels)
+        losses.backward()
+
+        optimizer.step()
+
+        loss = 0
+        accuracy = 0
+        with torch.no_grad():
+            loss = torch.sum(losses)
+            accuracy = compute_model_accuracy(logistic_regression_model, mnist_test_dataset)
+
+        print(f"Epoch: {epoch}\tloss: {loss:0.5f}\taccuracy: {accuracy:.4f}")
+
+
+# Print losses one last time
+print("Complete.")
+print("")
+print("FINAL RESULTS:")
+
+
+loss = 0
+accuracy = 0
+with torch.no_grad():
+    logistic_regression_model.eval()
+
+    inputs, labels = mnist_train_dataset[:]
+    losses = compute_model_loss(logistic_regression_model, inputs, labels)
+
+    loss = torch.sum(losses)
+    accuracy = compute_model_accuracy(logistic_regression_model, mnist_test_dataset)
+
+print(f"Loss: {loss:0.5f}\taccuracy: {accuracy:0.4f}")
+
+
+end_time = time.time()
+print("Total execution time: {:.2f}".format(end_time - start_time))

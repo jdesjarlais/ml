@@ -16,8 +16,8 @@ should_train = True
 learning_rate = 0.07
 epochs = 200
 training_batch_size = 1
-stop_point = 70000
-assumes_equal_class_distribution = False
+stop_point = 700000
+assumes_equal_class_distribution = True
 
 training_labels_file = "/Users/adesjarlais/devel/data/mnist/train-labels-idx1-ubyte"
 training_images_file = "/Users/adesjarlais/devel/data/mnist/train-images-idx3-ubyte"
@@ -236,7 +236,8 @@ for i, (inputs, labels) in enumerate(mnist_train_dataloader):
     class_counts[digit] += 1
 
     print(f"Mean {i}")
-    if i + 1 >= stop_point:
+
+    if i > stop_point:
         break
 
 mean = mean / class_counts.unsqueeze(1)
@@ -260,13 +261,13 @@ for i, (inputs, labels) in enumerate(mnist_train_dataloader):
     covariance += cov_contribution
  
     print(f"Covariance {i}")
-    if i + 1 >= stop_point:
+
+    if i > stop_point:
         break
 
 
 total_count = torch.sum(class_counts).item()
 covariance = covariance / total_count
-# TODO: try assuming all classes are equal?
 class_probabilities = class_counts / total_count
 
 covariance = covariance.to("cpu")
@@ -275,19 +276,20 @@ covariance_inv = torch.linalg.pinv(covariance).to(device)
 covariance = covariance.to(device)
 covariance_inv = covariance_inv.to(device)
 
+arbitrary_constant_to_bring_into_float32_range1 = 1.0e152
+digit_class_probabilities = torch.zeros(10)
+digit_class_probabilities = digit_class_probabilities.to(device)
 
 correct_count = 0
 total_count = 0
 for i, (inputs, labels) in enumerate(mnist_test_dataloader):
     assert(inputs.shape[0] == 1)
 
+    digit = labels.item()
     inputs = inputs.to(device)
     input = inputs.reshape((-1,))
 
-    digit_class_probabilities = torch.zeros(10, device=device)
-    arbitrary_constant_to_bring_into_float32_range1 = 1.0e152
 
-    digit = labels.item()
     for digit_class in range(9):
         digit_mean = mean[digit_class]
         
@@ -301,21 +303,16 @@ for i, (inputs, labels) in enumerate(mnist_test_dataloader):
         exp_input = torch.matmul(exp_input, delta)
         exp_output = math.exp(exp_input.item())
 
-        output = exp_output * arbitrary_constant_to_bring_into_float32_range1
-        class_probability = class_probabilities[digit_class].item()
+        digit_class_probabilities[digit_class] = exp_output * arbitrary_constant_to_bring_into_float32_range1
 
-        final = output * class_probability
-        digit_class_probabilities[digit_class] = final
+    class_probability = class_probabilities[digit_class].item()
 
+    if not assumes_equal_class_distribution:
+        digit_class_probabilities = digit_class_probabilities * class_probabilities
 
-    if assumes_equal_class_distribution:
-        digit_class_estimation = digit_class_probabilities
-    else:
-        digit_class_estimation = digit_class_probabilities * class_probabilities
+    estimated_digit = torch.argmax(digit_class_probabilities)
 
-    estimated_digit = torch.argmax(digit_class_estimation)
-
-    print(f"Label: {digit} Output: {estimated_digit}")
+    print(f"Label: {digit} Output: {estimated_digit}       Correct:{digit == estimated_digit}")
 
 
     if digit == estimated_digit:

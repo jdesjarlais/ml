@@ -14,12 +14,12 @@ from torch.utils.data import Dataset, DataLoader
 
 ######### SETTINGS #########
 should_train = True
-#learning_rate = 0.00003
-learning_rate = -0.00003
-epochs = 20000
+learning_rate = 0.0000001
+#learning_rate = -0.00003
+epochs = 200000000
 
-training_set_size = 1000
-test_set_size = 1000
+training_set_size = 40000
+test_set_size = 10000
 training_batch_size = training_set_size
 
 constraint_1_strength = 1
@@ -422,6 +422,7 @@ test_X = test_X.to(device)
 test_Y = test_Y.to(device)
 
 example_count = train_X.shape[0]
+#a = torch.nn.Parameter(torch.rand(example_count, device=device))
 a = torch.nn.Parameter(torch.zeros(example_count, device=device))
 b = 0
 params = [a]
@@ -434,13 +435,13 @@ params = [a]
 
 
 
-optimizer = CustomSGDOptimizer(params, lr=learning_rate)
+#optimizer = CustomSGDOptimizer(params, lr=learning_rate)
 #optimizer = torch.optim.SGD(params, lr=learning_rate)
-#optimizer = torch.optim.Adadelta(params, lr=0.1, rho=0.9, eps=1e-06, weight_decay=0)
+#optimizer = torch.optim.Adadelta(params, lr=learning_rate, rho=0.9, eps=1e-06, weight_decay=0)
 #optimizer = torch.optim.Adagrad(params, lr=0.01, lr_decay=0, weight_decay=0, initial_accumulator_value=0, eps=1e-10) 
 #optimizer = torch.optim.Adam(params, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
 #optimizer = torch.optim.AdamW(params, lr=learning_rate, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.01, amsgrad=False)
-#optimizer = torch.optim.Adamax(params, lr=learning_rate, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+optimizer = torch.optim.Adamax(params, lr=learning_rate, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
 #optimizer = torch.optim.ASGD(params, lr=0.01, lambd=0.0001, alpha=0.75, t0=1000000.0, weight_decay=0)
 
 
@@ -466,38 +467,30 @@ if should_train:
     positive_cases_test = torch.clamp(test_Y, min=0.0)
     negative_cases_test = -1.0 * torch.clamp(test_Y, max=0.0)
 
+
     for epoch in range(epochs):
         loss = torch.zeros(1, device=device)
 
         optimizer.zero_grad()
 
 
+
+
         # Forward pass
         forward_start = time.time()
 
-        loss2 = torch.mul(train_inner_product_grid, a)
-        loss2 = torch.mul(loss2, train_Y)
-        loss2 = torch.sum(loss2, 1)
-        loss2 = torch.mul(loss2, a)
-        loss2 = torch.mul(loss2, train_Y)
-        loss2 = torch.sum(loss2)
-
-        loss = torch.sum(a) - 0.5 * loss2
+        model_outputs_train = torch.mul(train_inner_product_grid, a)
+        model_outputs_train = torch.mul(model_outputs_train, train_Y)
+        model_outputs_train = torch.sum(model_outputs_train, 1)
 
 
-#        for i in range(training_set_size):
-#            ai = a[i]
-#            xi = train_X[i]
-#            yi = train_Y[i]
-#
-#            all_inner_products_of_i = inner_product_grid[i]
-#
-#            loss_i = all_inner_products_of_i * train_Y * a
-#            loss_i = ai * yi * torch.sum(loss_i)
-#
-#            loss += loss_i
-#
-#        loss = torch.sum(a) - 0.5 * loss
+
+
+        # Loss calculation
+        loss_model = torch.mul(model_outputs_train, a)
+        loss_model = torch.mul(loss_model, train_Y)
+        loss_model = torch.sum(loss_model)
+        loss_model = torch.sum(a) - 0.5 * loss_model
 
         loss_missed_constraint_1 = torch.sum(torch.clamp(a, max=0.0))
         loss_missed_constraint_1 = constraint_1_strength * math.pow(loss_missed_constraint_1, 2)
@@ -505,7 +498,8 @@ if should_train:
         loss_missed_constraint_2 = torch.sum(torch.mul(a, train_Y))
         loss_missed_constraint_2 = constraint_2_strength * math.pow(loss_missed_constraint_2, 2)
 
-        loss = loss + loss_missed_constraint_1 + loss_missed_constraint_2
+        loss = loss_model + loss_missed_constraint_1 + loss_missed_constraint_2
+        loss = -0.0001 * loss
 
         forward_end = time.time()
 
@@ -515,10 +509,10 @@ if should_train:
         backward_start = time.time()
 
         loss.backward()
-        #(-loss).backward()
         optimizer.step()
 
         backward_end = time.time()
+
 
 
 
@@ -527,40 +521,10 @@ if should_train:
         b_start = time.time()
 
         with torch.no_grad():
-#            min_1_case = None
-#            max_0_case = None
-#            output_list = []
-#            for i in range(training_set_size):
-#                xi = train_X[i]
-#                correct_output = train_Y[i].item()
-#
-#                # xi from [input_size] -> [input_size, 1]
-#                u = torch.unsqueeze(xi, 1)
-#
-#                # Output will be inner product of xi and all inputs listed in train_X
-#                output = torch.matmul(train_X, u).squeeze()
-#                output = output * train_Y * a
-#                output = torch.sum(output).item()
-#                output_list.append(output)
-#
-#
-#                if correct_output == 1:
-#                    if min_1_case is None or min_1_case > output:
-#                        min_1_case = output
-#                elif correct_output == -1:
-#                    if max_0_case is None or max_0_case < output:
-#                        max_0_case = output
-#                else:
-#                    assert(false)
-
-            model_outputs = torch.mul(train_inner_product_grid, a)
-            model_outputs = torch.mul(model_outputs, train_Y)
-            model_outputs = torch.sum(model_outputs, 1)
-
-            model_outputs_positive_cases = positive_cases_train * model_outputs
+            model_outputs_positive_cases = positive_cases_train * model_outputs_train
             # TODO: is there a better way to do this?
             # Add positive cases + very large negative number to avoid 0.0 coming out as the "max" of the negative cases (since they are all less than 0)
-            model_outputs_negative_cases = negative_cases_train * model_outputs + -10000.0 * positive_cases_train
+            model_outputs_negative_cases = negative_cases_train * model_outputs_train + -10000.0 * positive_cases_train
 
             min_1_case = torch.min(model_outputs_positive_cases).item()
             max_0_case = torch.max(model_outputs_negative_cases).item()
@@ -579,18 +543,16 @@ if should_train:
         total_loss_value = loss.item()
 
         with torch.no_grad():
-            model_outputs_test = torch.mul(test_inner_product_grid, a)
-            model_outputs_test = torch.mul(model_outputs_test, train_Y)
-            model_outputs_test = torch.sum(model_outputs_test, 1) + b
-            model_outputs_test = (model_outputs_test >= 0.0).float()
+            total_model_outputs_test = torch.mul(test_inner_product_grid, a)
+            total_model_outputs_test = torch.mul(total_model_outputs_test, train_Y)
+            total_model_outputs_test = torch.sum(total_model_outputs_test, 1) + b
+            total_model_outputs_test = (total_model_outputs_test >= 0.0).float()
 
-            model_outputs_train = torch.mul(train_inner_product_grid, a)
-            model_outputs_train = torch.mul(model_outputs_train, train_Y)
-            model_outputs_train = torch.sum(model_outputs_train, 1) + b
-            model_outputs_train = (model_outputs_train >= 0.0).float()
+            total_model_outputs_train = model_outputs_train + b
+            total_model_outputs_train = (total_model_outputs_train >= 0.0).float()
 
-            test_correct = (model_outputs_test == positive_cases_test).float()
-            train_correct = (model_outputs_train == positive_cases_train).float()
+            test_correct = (total_model_outputs_test == positive_cases_test).float()
+            train_correct = (total_model_outputs_train == positive_cases_train).float()
 
             test_total_correct = torch.sum(test_correct).item()
             train_total_correct = torch.sum(train_correct).item()
@@ -601,11 +563,11 @@ if should_train:
 
         metrics_end = time.time()
         print(f"Epoch: {epoch}")
-        print(f"\tloss: {average_loss:0.5f}\ttrain_accuracy: {train_average_accuracy:.4f}\ttest_accuracy: {test_average_accuracy:.4f}")
-        print(f"\tforward time: {forward_end - forward_start:0.3f}\t")
-        print(f"\tbackward time: {backward_end-backward_start:0.3f}")
-        print(f"\tb time: {b_end-b_start:.3f}")
-        print(f"\tmetrics time: {metrics_end-metrics_start:.3f}")
+        print(f"\tloss: {average_loss:0.20f}\ttrain_accuracy: {train_average_accuracy:.4f}\ttest_accuracy: {test_average_accuracy:.4f}")
+        print(f"\tforward time: {(forward_end - forward_start)*1000:0.3f}ms\t")
+        print(f"\tbackward time: {(backward_end-backward_start)*1000:0.3f}ms")
+        print(f"\tb time: {(b_end-b_start)*1000:.3f}ms")
+        print(f"\tmetrics time: {(metrics_end-metrics_start)*1000:.3f}ms")
         print()
 
     # Print losses one last time

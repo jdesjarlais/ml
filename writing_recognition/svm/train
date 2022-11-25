@@ -1,0 +1,709 @@
+#!/usr/bin/env python3
+
+# Trains an optimal margin classifier on the mnist date set.
+
+import numpy as np
+import torch
+import time
+import math
+from typing import List, Optional
+
+from torchvision import transforms, utils
+from torch.utils.data import Dataset, DataLoader
+
+
+######### SETTINGS #########
+should_train = True
+learning_rate = 0.1
+epochs = 501
+
+training_set_size = 30000
+test_set_size = 10000
+training_batch_size = training_set_size
+
+training_labels_file = "/Users/adesjarlais/devel/data/mnist/train-labels-idx1-ubyte"
+training_images_file = "/Users/adesjarlais/devel/data/mnist/train-images-idx3-ubyte"
+
+test_labels_file = "/Users/adesjarlais/devel/data/mnist/t10k-labels-idx1-ubyte"
+test_images_file = "/Users/adesjarlais/devel/data/mnist/t10k-images-idx3-ubyte"
+
+print_metrics = True
+metrics_print_interval = 10
+model_save_file = "/Users/adesjarlais/devel/data/models/writing_recognition/svm/model.pt"
+save_model = True
+use_saved_model = True
+############################
+
+assert(training_set_size <= 60000)
+assert(training_batch_size <= training_set_size)
+assert(test_set_size <= 10000)
+
+
+
+# Transforms
+
+class Normalize(object):
+    """Normalize a tensor to a min/max range."""
+
+    __input_range = 1.0
+    __output_range = 1.0
+
+    def __init__(self, input_min, input_max, output_min=0.0, output_max=1.0):
+        self.input_min = input_min
+        self.__input_range = input_max - input_min
+
+        self.output_min = output_min
+        self.__output_range = output_max - output_min
+
+    def __call__(self, sample):
+        assert(type(sample) is torch.Tensor)
+
+        normalized_sample = (sample - self.input_min)/self.__input_range
+        return (normalized_sample * self.__output_range) + self.output_min
+
+class ToTensor(object):
+    """Convert ndarrays in sample to Tensors."""
+
+    def __call__(self, sample):
+        tensor = None
+        if type(sample) is np.ndarray:
+            tensor = torch.from_numpy(sample)
+        else:
+            tensor = torch.Tensor([sample])
+        return tensor
+
+class ToOneHot(object):
+    """Converts a constant or list of constants to a one hot array"""
+
+    def __init__(self, num_classes):
+        self.num_classes = num_classes
+
+    def __call__(self, sample):
+        output = None
+        if type(sample) is np.ndarray:
+
+            output = -1 * torch.ones((sample.shape[0], self.num_classes))
+            for i in range(sample.shape[0]):
+                hot_index = sample[i]
+                output[i][hot_index] = 1
+        elif type(sample) is torch.Tensor:
+            output = -1 * torch.ones((sample.shape[0], self.num_classes))
+            for i in range(sample.shape[0]):
+                output[i][sample] = 1
+        else:
+            output = torch.zeros(self.num_classes)
+            output[sample] = 1
+        return output
+
+class ToIsNine(object):
+    """Converts a constant or list of constants to either a -1 if the constant is not a 9 or 1 is the constant is a nine"""
+
+    def __call__(self, sample):
+        output = None
+        if type(sample) is np.ndarray:
+            output = torch.zeros(sample.shape[0])
+            for i in range(sample.shape[0]):
+                if sample[i] == 9:
+                    output[i] = 1
+                else:
+                    output[i] = -1
+        elif type(sample) is torch.Tensor:
+            output = torch.zeros(sample.shape[0])
+            for i in range(sample.shape[0]):
+                if sample[i] == 9:
+                    output[i] = 1
+                else:
+                    output[i] = -1
+        else:
+            if sample == 9:
+                output = torch.Tensor([1])
+            else:
+                output = torch.Tensor([-1])
+        return output
+
+
+
+
+# Datasets
+
+class MNISTDataset(Dataset):
+
+    images_file_path = None
+    labels_file_path = None
+
+    image_size = None
+
+    __has_been_loaded = False
+
+    __len = None
+    __images = None
+    __labels = None
+
+    def __init__(self, images_file_path, labels_file_path, input_transform=None, label_transform=None):
+        self.images_file_path = images_file_path
+        self.labels_file_path = labels_file_path
+
+        self.input_transform = input_transform
+        self.label_transform = label_transform
+
+    def __len__(self):
+        self.__load_data_set_if_needed()
+
+        return self.__len
+
+    def __getitem__(self, idx):
+        self.__load_data_set_if_needed()
+
+        image = self.__images[idx]
+        if self.input_transform:
+            image = self.input_transform(image)
+
+        label = self.__labels[idx]
+        if self.label_transform:
+            label = self.label_transform(label)
+
+        return image, label
+
+    def __load_data_set_if_needed(self):
+        if not self.__has_been_loaded:
+            self.__load_data_set()
+
+    def __load_data_set(self):
+        assert(not self.__has_been_loaded)
+
+        self.__has_been_loaded = True
+
+        with open(self.images_file_path, "r") as images_file:
+            header = np.fromfile(images_file, dtype=np.dtype('>i4'), count=4)
+
+            magic_number = header[0]
+            item_count = header[1]
+            num_rows = header[2]
+            num_columns = header[3]
+            pixels_per_image = num_rows * num_columns
+            images_bytes = np.fromfile(images_file, dtype=np.ubyte, count=-1)
+
+            images_file.close()
+
+            assert(magic_number == 2051)
+            assert(num_rows == 28)
+            assert(num_columns == 28)
+            assert(images_bytes.size == item_count * num_rows * num_columns)
+
+            images = np.reshape(images_bytes, (item_count, -1))
+
+            # TODO: is there a way to apply Transforms to a list or inputs
+
+            self.image_size = num_rows * num_columns
+            self.__images = images
+
+        with open(self.labels_file_path, "r") as labels_file:
+            header = np.fromfile(labels_file, dtype=np.dtype('>i4'), count=2)
+
+            magic_number = header[0]
+            item_count = header[1]
+            labels = np.fromfile(labels_file, dtype=np.ubyte, count=-1)
+
+            labels_file.close()
+
+            assert(magic_number == 2049)
+            assert(labels.size == item_count)
+
+            self.__labels = labels
+
+        assert(self.__images.shape[0] == self.__labels.shape[0])
+
+        self.__len = self.__images.shape[0]
+
+
+# Model
+
+class SVMClassifierModel(torch.nn.Module):
+
+    def __init__(self, input_size, train_input, train_output):
+        super(SVMClassifierModel, self).__init__()
+
+        assert(input.shape[0] == output.shape[0])
+        size = input.shape[0]
+
+        self.a = torch.nn.Parameter(torch.zeros(size))
+        self.b = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, x):
+        kernel_out = self._linear_kernel(x, train_input)
+
+        y = kernel_out * self.a * train_output
+
+        return y
+
+    def _linear_kernel(u, X):
+        assert(u.shape[0] == X.shape[1])
+
+
+        # u
+        # [784, 1]
+        #
+        # [ unkown ]
+        #
+        # Desired
+        # [1, 784]
+
+        # X
+        # [60000, 784]
+        #
+        # [
+        #   [input 1],
+        #   [input 2],
+        #   [input 3],
+        #   [input 4],
+        # ]
+        #
+        # Desired
+        # [784, 60000]
+
+
+        # Desired result
+        # [1, 60000]
+
+        batch_size = X.shape[0]
+        input_size = u.shape[0]
+
+        # u from [input_size] -> [1, input_size]
+        u = torch.unsqueeze(xi, 1)
+        # xj from [batch_size, input_size] -> [input_size, batch_size]
+        X = torch.permute(X, (input_size, batch_size))
+
+        # output will be inner product of xi and all inputs listed in xj
+        output = torch.matmul(u, X).squeeze()
+        return output
+
+
+# Loss Function
+
+class CustomSVMLoss(torch.nn.Module):
+    def __init__(self, model, c=0.1):
+        super(CustomSVMLoss, self).__init__();
+
+        self.model = model
+        self.c = c
+
+    def forward(self, predictions, target):
+        num_classes = predictions.shape[1]
+
+        loss = torch.clamp(1 - target * predictions, min=0)
+        loss = torch.pow(loss, 2)
+        loss = self.c * torch.sum(loss)
+        loss = loss/num_classes
+        loss = loss + 0.5 * torch.sum(torch.pow(self.model.linear.weight, 2))
+
+        return loss
+
+
+# Optimization
+
+class CustomSGDOptimizer(torch.optim.Optimizer):
+
+    def __init__(self, params, lr=0.001):
+        defaults = dict(lr=lr)
+        super(CustomSGDOptimizer, self).__init__(params, defaults)
+
+    def step(self, closure=None):
+        loss = None
+
+        for group in self.param_groups:
+            lr = group['lr']
+            params_with_grad = []
+            d_p_list = []
+
+            for p in group['params']:
+                if p.grad is not None:
+                    params_with_grad.append(p)
+                    d_p_list.append(p.grad)
+
+            with torch.no_grad():
+                for params, d_p in zip(params_with_grad, d_p_list):
+                    torch.Tensor.add_(params, d_p, alpha=-lr)
+
+        return loss
+
+
+    
+# Functions
+ 
+def save_model_state(model, output_file_path):
+    save_model_state_dict(model.state_dict(), output_file_path)
+
+def load_model_state(model, file_path):
+    try:
+        model.load_state_dict(load_model_state_dict(file_path))
+    except:
+        print("Failed to set model parameters.")
+
+def save_model_state_dict(model_state_dict, output_file_path):
+    try:
+        torch.save(model_state_dict, output_file_path)
+    except:
+        print("Failed to save model parameters.")
+
+def load_model_state_dict(file_path):
+    try:
+        return torch.load(file_path)
+    except:
+        print("Failed to load model parameters.")
+
+    return None
+
+def compute_model_accuracy(model, dataset):
+    accuracy = 0
+    with torch.no_grad():
+        model.eval()
+
+        inputs, labels = dataset[:]
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+
+        outputs = model(inputs)
+
+        predicted_value = torch.argmax(outputs, dim=1)
+        actual_value = torch.argmax(labels, dim=1)
+        correct_values = torch.eq(predicted_value, actual_value)
+        total_correct = torch.sum(correct_values).item()
+
+        accuracy = total_correct/inputs.shape[0]
+
+    return accuracy
+
+def compute_model_loss(model, loss_function, inputs, labels):
+    inputs = inputs.to(device)
+    labels = labels.to(device).float()
+
+    outputs = model(inputs)
+    losses = loss_function(outputs, labels)
+
+    return losses
+
+def compute_inner_products_matrix(X, Y):
+    inner_products = torch.matmul(X, torch.transpose(Y, 0, 1))
+
+    return inner_products
+
+def compute_guassian_kernel_matrix(X, Y, sigma):
+    inner_products = torch.zeros((X.shape[0], Y.shape[0]), device=X.device)
+
+    for i in range(inner_products.shape[0]):
+        xi = X[i]
+        sub = torch.sub(xi, Y)
+        norms = torch.norm(sub, dim=1)
+        norms_squared = torch.pow(norms, 2)
+        output = norms_squared * -1 * sigma
+        exp = torch.exp(output)
+
+        inner_products[i] = exp
+
+    return inner_products
+
+
+
+
+
+# Training
+
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+print(f"Using device: {device}")
+
+
+input_transform = transforms.Compose([
+    ToTensor(),
+    Normalize(input_min=0, input_max=255, output_min=0.0, output_max=1.0)
+])
+
+label_transform = transforms.Compose([
+    ToOneHot(10)
+#    ToIsNine()
+])
+
+mnist_train_dataset = MNISTDataset(images_file_path=training_images_file,
+                                   labels_file_path=training_labels_file,
+                                   input_transform=input_transform,
+                                   label_transform=label_transform)
+mnist_test_dataset = MNISTDataset(images_file_path=test_images_file,
+                                  labels_file_path=test_labels_file,
+                                  input_transform=input_transform,
+                                  label_transform=label_transform)
+
+mnist_train_dataloader = DataLoader(mnist_train_dataset, batch_size=training_batch_size, shuffle=True, num_workers=0)
+mnist_test_dataloader = DataLoader(mnist_test_dataset, shuffle=True, num_workers=0)
+
+
+
+
+
+#model = SVMClassifierModel(input_size=mnist_train_dataset.image_size, output_size=10, kernel="gaussian").to(device)
+#params = model.parameters()
+#
+
+train_X, train_Y = mnist_train_dataset[:training_set_size]
+test_X, test_Y = mnist_test_dataset[:test_set_size]
+assert(train_X.shape[0] == train_Y.shape[0])
+assert(test_X.shape[0] == test_Y.shape[0])
+
+train_X = train_X.to(device)
+train_Y = train_Y.to(device)
+test_X = test_X.to(device)
+test_Y = test_Y.to(device)
+
+example_count = train_X.shape[0]
+model_range = range(10)
+a = []
+for i in model_range:
+    a.append(torch.nn.Parameter(torch.zeros(example_count, device=device)))
+b = torch.nn.Parameter(torch.zeros(10, device=device))
+params = a
+
+
+
+
+#loss_function = CustomSVMLoss(model, c=0.1)
+
+
+if use_saved_model:
+    model_state_dict = load_model_state_dict(model_save_file)
+    if model_state_dict is not None:
+        a = model_state_dict["params"]
+
+
+optimizers = []
+for i in model_range:
+    params = [a[i]]
+
+    #optimizer = CustomSGDOptimizer(params, lr=learning_rate)
+    optimizer = torch.optim.SGD(params, lr=learning_rate)
+    #optimizer = torch.optim.Adadelta(params, lr=learning_rate, rho=0.9, eps=1e-06, weight_decay=0)
+    #optimizer = torch.optim.Adagrad(params, lr=0.01, lr_decay=0, weight_decay=0, initial_accumulator_value=0, eps=1e-10)
+    #optimizer = torch.optim.Adam(params, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
+    #optimizer = torch.optim.AdamW(params, lr=learning_rate, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.01, amsgrad=False)
+    #optimizer = torch.optim.Adamax(params, lr=learning_rate, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+    #optimizer = torch.optim.ASGD(params, lr=0.01, lambd=0.0001, alpha=0.75, t0=1000000.0, weight_decay=0)
+    #optimizer = torch.optim.SGD(params, lr=learning_rate)
+    #optimizer = torch.optim.Adamax(params, lr=learning_rate, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+
+    optimizers.append(optimizer)
+
+
+
+if should_train:
+    start_time = time.time()
+
+    train_Y_tp = torch.transpose(train_Y, 0, 1)
+    test_Y_tp = torch.transpose(test_Y, 0, 1)
+
+
+    # Output will be a grid of inner product of (train_X[i] x train_X[j]) where i is the tensor row and j is the tensor column.
+    train_inner_product_grid = compute_guassian_kernel_matrix(train_X, train_X, 0.001)
+    test_inner_product_grid = compute_guassian_kernel_matrix(test_X, train_X, 0.001)
+#    train_inner_product_grid = compute_inner_products_matrix(train_X, train_X)
+#    test_inner_product_grid = compute_inner_products_matrix(test_X, train_X)
+
+
+    train_correct_outputs = torch.argmax(train_Y, dim=1)
+    test_correct_outputs = torch.argmax(test_Y, dim=1)
+
+    positive_cases_train = []
+    negative_cases_train = []
+
+    positive_cases_test = []
+    negative_cases_test = []
+    for i in model_range:
+        positive_cases_train_i = torch.clamp(train_Y_tp[i], min=0.0)
+        negative_cases_train_i = -1.0 * torch.clamp(train_Y_tp[i], max=0.0)
+
+        positive_cases_test_i = torch.clamp(test_Y_tp[i], min=0.0)
+        negative_cases_test_i = -1.0 * torch.clamp(test_Y_tp[i], max=0.0)
+
+        positive_cases_train.append(positive_cases_train_i)
+        negative_cases_train.append(negative_cases_train_i)
+
+        positive_cases_test.append(positive_cases_test_i)
+        negative_cases_test.append(negative_cases_test_i)
+
+
+
+    for epoch in range(epochs):
+        forward_time = 0.0
+        loss_time = 0.0
+        backward_time = 0.0
+        b_time = 0.0
+
+
+        # TODO-jake: batch gradient descent
+        epoch_train_inner_product_grid = []
+        epoch_train_Y_tp = []
+        epoch_a = []
+        epoch_positive_cases_train = []
+        epoch_negative_cases_train = []
+        epoch_test_inner_product_grid = []
+        epoch_test_correct_outputs = []
+        epoch_train_correct_outputs = []
+
+
+        model_outputs_train = []
+        for i in model_range:
+            # Forward pass
+            forward_start = time.time()
+
+            model_outputs_train_i = torch.mul(train_inner_product_grid, a[i])
+            model_outputs_train_i = torch.mul(model_outputs_train_i, train_Y_tp[i])
+            model_outputs_train_i = torch.sum(model_outputs_train_i, 1)
+
+            model_outputs_train.append(model_outputs_train_i)
+
+            forward_end = time.time()
+            forward_time += forward_end - forward_start
+
+
+            # Loss calculation
+            loss_start = time.time()
+
+            loss_model = torch.mul(model_outputs_train[i], a[i])
+            loss_model = torch.mul(loss_model, train_Y_tp[i])
+            loss_model = torch.sum(loss_model)
+            loss_model = torch.sum(a[i]) - 0.5 * loss_model
+
+            loss = -0.0001 * loss_model
+
+            loss_end = time.time()
+            loss_time += loss_end - loss_start
+
+
+            # Backward pass
+            backward_start = time.time()
+
+            loss.backward()
+            optimizers[i].step()
+
+            backward_end = time.time()
+            backward_time += backward_end - backward_start
+
+
+
+        if not print_metrics or epoch % metrics_print_interval != 0:
+            print(f"Epoch: {epoch}")
+            print(f"\tforward time: {forward_time*1000:0.3f}ms\t")
+            print(f"\tloss time: {loss_time*1000:.3f}ms")
+            print(f"\tbackward time: {backward_time*1000:0.3f}ms")
+            print()
+        else:
+
+            # Calculate b
+            b_start = time.time()
+
+            with torch.no_grad():
+                for i in model_range:
+                    model_outputs_positive_cases = positive_cases_train[i] * model_outputs_train[i]
+                    # TODO: is there a better way to do this?
+                    # Add positive cases + very large negative number to avoid 0.0 coming out as the "max" of the negative cases (since they are all less than 0)
+                    model_outputs_negative_cases = negative_cases_train[i] * model_outputs_train[i] + -10000.0 * positive_cases_train[i]
+
+                    min_1_case = torch.min(model_outputs_positive_cases).item()
+                    max_0_case = torch.max(model_outputs_negative_cases).item()
+
+                    b[i] = -0.5 * (min_1_case + max_0_case)
+
+            b_end = time.time()
+            b_time = b_end - b_start
+
+
+
+
+            # Compute loss and accuracy metrics
+            metrics_start = time.time()
+
+            train_total_correct = 0
+            test_total_correct = 0
+            total_loss_value = loss.item()
+
+            with torch.no_grad():
+
+                normalizations = torch.zeros(10, device=device)
+
+                total_model_outputs_train = torch.zeros((10, train_X.shape[0]), device=device)
+                for i in model_range:
+                    total_model_outputs_train_i = model_outputs_train[i] + b[i]
+
+                    train_min = torch.min(total_model_outputs_train_i)
+                    train_max = torch.max(total_model_outputs_train_i)
+                    normalizations[i] = max(abs(train_min), abs(train_max))
+
+                    total_model_outputs_train[i] = total_model_outputs_train_i/normalizations[i]
+
+
+                total_model_outputs_test = torch.zeros((10, test_X.shape[0]), device=device)
+                for i in model_range:
+                    total_model_outputs_test_i = torch.mul(test_inner_product_grid, a[i])
+                    total_model_outputs_test_i = torch.mul(total_model_outputs_test_i, train_Y_tp[i])
+                    total_model_outputs_test_i = torch.sum(total_model_outputs_test_i, 1) + b[i]
+
+                    total_model_outputs_test[i] = total_model_outputs_test_i/(normalizations[i].item())
+
+
+                train_outputs = torch.argmax(total_model_outputs_train, dim=0)
+                test_outputs = torch.argmax(total_model_outputs_test, dim=0)
+
+                test_correct = (test_outputs == test_correct_outputs).float()
+                train_correct = (train_outputs == train_correct_outputs).float()
+
+
+                test_total_correct = torch.sum(test_correct).item()
+                train_total_correct = torch.sum(train_correct).item()
+
+            average_loss = total_loss_value/training_set_size
+            train_average_accuracy = train_total_correct/training_set_size
+            test_average_accuracy = test_total_correct/test_set_size
+
+            metrics_end = time.time()
+            metrics_time = metrics_end - metrics_start
+
+
+
+            # Print metrics
+            print(f"Epoch: {epoch}")
+            print(f"\tloss: {average_loss:0.20f}\ttrain_accuracy: {train_average_accuracy:.4f}\ttest_accuracy: {test_average_accuracy:.4f}")
+            print(f"\tforward time: {forward_time*1000:0.3f}ms\t")
+            print(f"\tloss time: {loss_time*1000:.3f}ms")
+            print(f"\tbackward time: {backward_time*1000:0.3f}ms")
+            print(f"\tb time: {b_time*1000:.3f}ms")
+            print(f"\tmetrics time: {metrics_time*1000:.3f}ms")
+            print()
+
+    # Print losses one last time
+    print("Training complete.")
+    print("")
+
+
+
+if save_model:
+    model_state_dict = { }
+    model_state_dict["params"] = a
+    save_model_state_dict(model_state_dict, model_save_file)
+
+
+print("FINAL RESULTS:")
+
+
+# TODO: implement final result calculation
+#loss = 0
+#accuracy = 0
+#with torch.no_grad():
+#    model.eval()
+#
+#    inputs, labels = mnist_train_dataset[:]
+#    losses = compute_model_loss(model, loss_function, inputs, labels)
+#
+#    loss = torch.sum(losses)
+#    accuracy = compute_model_accuracy(model, mnist_test_dataset)
+#
+#print(f"Loss: {loss:0.5f}\taccuracy: {accuracy:0.4f}")
+
+
+end_time = time.time()
+print("Total execution time: {:.2f}".format(end_time - start_time))

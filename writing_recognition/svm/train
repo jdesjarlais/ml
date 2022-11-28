@@ -14,12 +14,16 @@ from torch.utils.data import Dataset, DataLoader
 
 ######### SETTINGS #########
 should_train = True
-learning_rate = 0.1
-epochs = 501
+# training_set_size -> learning_rate
+#       1000  -> 0.003
+#       3000  -> 0.001
+#       30000 -> 0.0001
+learning_rate = 0.000001
+epochs = 600
 
 training_set_size = 30000
 test_set_size = 10000
-training_batch_size = training_set_size
+training_batch_size = 30000
 
 training_labels_file = "/Users/adesjarlais/devel/data/mnist/train-labels-idx1-ubyte"
 training_images_file = "/Users/adesjarlais/devel/data/mnist/train-images-idx3-ubyte"
@@ -28,7 +32,7 @@ test_labels_file = "/Users/adesjarlais/devel/data/mnist/t10k-labels-idx1-ubyte"
 test_images_file = "/Users/adesjarlais/devel/data/mnist/t10k-images-idx3-ubyte"
 
 print_metrics = True
-metrics_print_interval = 10
+metrics_print_interval = 30
 model_save_file = "/Users/adesjarlais/devel/data/models/writing_recognition/svm/model.pt"
 save_model = True
 use_saved_model = True
@@ -216,67 +220,6 @@ class MNISTDataset(Dataset):
         self.__len = self.__images.shape[0]
 
 
-# Model
-
-class SVMClassifierModel(torch.nn.Module):
-
-    def __init__(self, input_size, train_input, train_output):
-        super(SVMClassifierModel, self).__init__()
-
-        assert(input.shape[0] == output.shape[0])
-        size = input.shape[0]
-
-        self.a = torch.nn.Parameter(torch.zeros(size))
-        self.b = torch.nn.Parameter(torch.zeros(1))
-
-    def forward(self, x):
-        kernel_out = self._linear_kernel(x, train_input)
-
-        y = kernel_out * self.a * train_output
-
-        return y
-
-    def _linear_kernel(u, X):
-        assert(u.shape[0] == X.shape[1])
-
-
-        # u
-        # [784, 1]
-        #
-        # [ unkown ]
-        #
-        # Desired
-        # [1, 784]
-
-        # X
-        # [60000, 784]
-        #
-        # [
-        #   [input 1],
-        #   [input 2],
-        #   [input 3],
-        #   [input 4],
-        # ]
-        #
-        # Desired
-        # [784, 60000]
-
-
-        # Desired result
-        # [1, 60000]
-
-        batch_size = X.shape[0]
-        input_size = u.shape[0]
-
-        # u from [input_size] -> [1, input_size]
-        u = torch.unsqueeze(xi, 1)
-        # xj from [batch_size, input_size] -> [input_size, batch_size]
-        X = torch.permute(X, (input_size, batch_size))
-
-        # output will be inner product of xi and all inputs listed in xj
-        output = torch.matmul(u, X).squeeze()
-        return output
-
 
 # Loss Function
 
@@ -419,7 +362,6 @@ input_transform = transforms.Compose([
 
 label_transform = transforms.Compose([
     ToOneHot(10)
-#    ToIsNine()
 ])
 
 mnist_train_dataset = MNISTDataset(images_file_path=training_images_file,
@@ -438,10 +380,6 @@ mnist_test_dataloader = DataLoader(mnist_test_dataset, shuffle=True, num_workers
 
 
 
-#model = SVMClassifierModel(input_size=mnist_train_dataset.image_size, output_size=10, kernel="gaussian").to(device)
-#params = model.parameters()
-#
-
 train_X, train_Y = mnist_train_dataset[:training_set_size]
 test_X, test_Y = mnist_test_dataset[:test_set_size]
 assert(train_X.shape[0] == train_Y.shape[0])
@@ -456,14 +394,11 @@ example_count = train_X.shape[0]
 model_range = range(10)
 a = []
 for i in model_range:
-    a.append(torch.nn.Parameter(torch.zeros(example_count, device=device)))
-b = torch.nn.Parameter(torch.zeros(10, device=device))
+    a.append(torch.nn.Parameter(torch.zeros(training_set_size, device=device)))
+b = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 params = a
 
 
-
-
-#loss_function = CustomSVMLoss(model, c=0.1)
 
 
 if use_saved_model:
@@ -475,35 +410,20 @@ if use_saved_model:
 optimizers = []
 for i in model_range:
     params = [a[i]]
-
-    #optimizer = CustomSGDOptimizer(params, lr=learning_rate)
     optimizer = torch.optim.SGD(params, lr=learning_rate)
-    #optimizer = torch.optim.Adadelta(params, lr=learning_rate, rho=0.9, eps=1e-06, weight_decay=0)
-    #optimizer = torch.optim.Adagrad(params, lr=0.01, lr_decay=0, weight_decay=0, initial_accumulator_value=0, eps=1e-10)
-    #optimizer = torch.optim.Adam(params, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
-    #optimizer = torch.optim.AdamW(params, lr=learning_rate, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.01, amsgrad=False)
-    #optimizer = torch.optim.Adamax(params, lr=learning_rate, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
-    #optimizer = torch.optim.ASGD(params, lr=0.01, lambd=0.0001, alpha=0.75, t0=1000000.0, weight_decay=0)
-    #optimizer = torch.optim.SGD(params, lr=learning_rate)
-    #optimizer = torch.optim.Adamax(params, lr=learning_rate, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
-
     optimizers.append(optimizer)
 
 
 
+start_time = time.time()
 if should_train:
-    start_time = time.time()
 
     train_Y_tp = torch.transpose(train_Y, 0, 1)
     test_Y_tp = torch.transpose(test_Y, 0, 1)
 
-
     # Output will be a grid of inner product of (train_X[i] x train_X[j]) where i is the tensor row and j is the tensor column.
     train_inner_product_grid = compute_guassian_kernel_matrix(train_X, train_X, 0.001)
     test_inner_product_grid = compute_guassian_kernel_matrix(test_X, train_X, 0.001)
-#    train_inner_product_grid = compute_inner_products_matrix(train_X, train_X)
-#    test_inner_product_grid = compute_inner_products_matrix(test_X, train_X)
-
 
     train_correct_outputs = torch.argmax(train_Y, dim=1)
     test_correct_outputs = torch.argmax(test_Y, dim=1)
@@ -526,24 +446,51 @@ if should_train:
         positive_cases_test.append(positive_cases_test_i)
         negative_cases_test.append(negative_cases_test_i)
 
+    batch_idx = 0
+    num_batches = training_set_size/training_batch_size
+    assert(training_set_size % training_batch_size == 0)
 
 
     for epoch in range(epochs):
+        cumulative_loss = 0.0
+
         forward_time = 0.0
         loss_time = 0.0
         backward_time = 0.0
         b_time = 0.0
 
 
-        # TODO-jake: batch gradient descent
-        epoch_train_inner_product_grid = []
-        epoch_train_Y_tp = []
-        epoch_a = []
-        epoch_positive_cases_train = []
-        epoch_negative_cases_train = []
-        epoch_test_inner_product_grid = []
-        epoch_test_correct_outputs = []
-        epoch_train_correct_outputs = []
+        epoch_train_inner_product_grid = train_inner_product_grid
+        epoch_test_inner_product_grid = test_inner_product_grid
+        epoch_train_Y_tp = train_Y_tp
+        epoch_train_correct_outputs = train_correct_outputs
+        epoch_a = a
+        epoch_positive_cases_train = positive_cases_train
+        epoch_negative_cases_train = negative_cases_train
+
+        if training_batch_size != training_set_size:
+            random_indices = torch.arange(training_batch_size) + batch_idx * training_batch_size
+            batch_idx += 1
+            if batch_idx >= num_batches:
+                batch_idx = 0
+
+            epoch_train_inner_product_grid = train_inner_product_grid[random_indices][:,random_indices]
+            epoch_test_inner_product_grid = test_inner_product_grid[:,random_indices]
+            epoch_train_Y_tp = train_Y_tp[:,random_indices]
+            epoch_train_correct_outputs = train_correct_outputs[random_indices]
+
+            epoch_a = []
+            epoch_positive_cases_train = []
+            epoch_negative_cases_train = []
+            for i in model_range:
+                epoch_a_i = a[i][random_indices]
+                epoch_positive_cases_train_i = positive_cases_train[i][random_indices]
+                epoch_negative_cases_train_i = negative_cases_train[i][random_indices]
+
+                epoch_a.append(epoch_a_i)
+                epoch_positive_cases_train.append(epoch_positive_cases_train_i)
+                epoch_negative_cases_train.append(epoch_negative_cases_train_i)
+
 
 
         model_outputs_train = []
@@ -551,8 +498,8 @@ if should_train:
             # Forward pass
             forward_start = time.time()
 
-            model_outputs_train_i = torch.mul(train_inner_product_grid, a[i])
-            model_outputs_train_i = torch.mul(model_outputs_train_i, train_Y_tp[i])
+            model_outputs_train_i = torch.mul(epoch_train_inner_product_grid, epoch_a[i])
+            model_outputs_train_i = torch.mul(model_outputs_train_i, epoch_train_Y_tp[i])
             model_outputs_train_i = torch.sum(model_outputs_train_i, 1)
 
             model_outputs_train.append(model_outputs_train_i)
@@ -564,12 +511,13 @@ if should_train:
             # Loss calculation
             loss_start = time.time()
 
-            loss_model = torch.mul(model_outputs_train[i], a[i])
-            loss_model = torch.mul(loss_model, train_Y_tp[i])
+            loss_model = torch.mul(model_outputs_train[i], epoch_a[i])
+            loss_model = torch.mul(loss_model, epoch_train_Y_tp[i])
             loss_model = torch.sum(loss_model)
-            loss_model = torch.sum(a[i]) - 0.5 * loss_model
+            loss_model = torch.sum(epoch_a[i]) - 0.5 * loss_model
 
-            loss = -0.0001 * loss_model
+            loss = -1 * loss_model
+            cumulative_loss += loss.item()
 
             loss_end = time.time()
             loss_time += loss_end - loss_start
@@ -584,10 +532,11 @@ if should_train:
             backward_end = time.time()
             backward_time += backward_end - backward_start
 
-
+        average_loss = cumulative_loss/training_batch_size
 
         if not print_metrics or epoch % metrics_print_interval != 0:
             print(f"Epoch: {epoch}")
+            print(f"\tloss: {average_loss:0.20f}")
             print(f"\tforward time: {forward_time*1000:0.3f}ms\t")
             print(f"\tloss time: {loss_time*1000:.3f}ms")
             print(f"\tbackward time: {backward_time*1000:0.3f}ms")
@@ -599,10 +548,10 @@ if should_train:
 
             with torch.no_grad():
                 for i in model_range:
-                    model_outputs_positive_cases = positive_cases_train[i] * model_outputs_train[i]
+                    model_outputs_positive_cases = epoch_positive_cases_train[i] * model_outputs_train[i]
                     # TODO: is there a better way to do this?
                     # Add positive cases + very large negative number to avoid 0.0 coming out as the "max" of the negative cases (since they are all less than 0)
-                    model_outputs_negative_cases = negative_cases_train[i] * model_outputs_train[i] + -10000.0 * positive_cases_train[i]
+                    model_outputs_negative_cases = epoch_negative_cases_train[i] * model_outputs_train[i] + -10000.0 * epoch_positive_cases_train[i]
 
                     min_1_case = torch.min(model_outputs_positive_cases).item()
                     max_0_case = torch.max(model_outputs_negative_cases).item()
@@ -620,13 +569,12 @@ if should_train:
 
             train_total_correct = 0
             test_total_correct = 0
-            total_loss_value = loss.item()
 
             with torch.no_grad():
 
                 normalizations = torch.zeros(10, device=device)
 
-                total_model_outputs_train = torch.zeros((10, train_X.shape[0]), device=device)
+                total_model_outputs_train = torch.zeros((10, model_outputs_train[0].shape[0]), device=device)
                 for i in model_range:
                     total_model_outputs_train_i = model_outputs_train[i] + b[i]
 
@@ -639,8 +587,8 @@ if should_train:
 
                 total_model_outputs_test = torch.zeros((10, test_X.shape[0]), device=device)
                 for i in model_range:
-                    total_model_outputs_test_i = torch.mul(test_inner_product_grid, a[i])
-                    total_model_outputs_test_i = torch.mul(total_model_outputs_test_i, train_Y_tp[i])
+                    total_model_outputs_test_i = torch.mul(epoch_test_inner_product_grid, epoch_a[i])
+                    total_model_outputs_test_i = torch.mul(total_model_outputs_test_i, epoch_train_Y_tp[i])
                     total_model_outputs_test_i = torch.sum(total_model_outputs_test_i, 1) + b[i]
 
                     total_model_outputs_test[i] = total_model_outputs_test_i/(normalizations[i].item())
@@ -650,14 +598,12 @@ if should_train:
                 test_outputs = torch.argmax(total_model_outputs_test, dim=0)
 
                 test_correct = (test_outputs == test_correct_outputs).float()
-                train_correct = (train_outputs == train_correct_outputs).float()
-
+                train_correct = (train_outputs == epoch_train_correct_outputs).float()
 
                 test_total_correct = torch.sum(test_correct).item()
                 train_total_correct = torch.sum(train_correct).item()
 
-            average_loss = total_loss_value/training_set_size
-            train_average_accuracy = train_total_correct/training_set_size
+            train_average_accuracy = train_total_correct/training_batch_size
             test_average_accuracy = test_total_correct/test_set_size
 
             metrics_end = time.time()
@@ -687,22 +633,51 @@ if save_model:
     save_model_state_dict(model_state_dict, model_save_file)
 
 
+
+
+# Calcualte final results
+
+# TODO-jake: this is the same code as the metrics calculation. Merge these.
+
+normalizations = torch.zeros(10, device=device)
+total_model_outputs_train = torch.zeros((10, model_outputs_train[0].shape[0]), device=device)
+total_model_outputs_test = torch.zeros((10, test_X.shape[0]), device=device)
+
+for i in model_range:
+    total_model_outputs_train_i = torch.mul(train_inner_product_grid, a[i])
+    total_model_outputs_train_i = torch.mul(total_model_outputs_train_i, train_Y_tp[i])
+    total_model_outputs_train_i = torch.sum(total_model_outputs_train_i, 1) + b[i]
+
+    train_min = torch.min(total_model_outputs_train_i)
+    train_max = torch.max(total_model_outputs_train_i)
+    normalizations[i] = max(abs(train_min), abs(train_max))
+
+    total_model_outputs_train[i] = total_model_outputs_train_i/normalizations[i]
+
+
+for i in model_range:
+    total_model_outputs_test_i = torch.mul(epoch_test_inner_product_grid, epoch_a[i])
+    total_model_outputs_test_i = torch.mul(total_model_outputs_test_i, epoch_train_Y_tp[i])
+    total_model_outputs_test_i = torch.sum(total_model_outputs_test_i, 1) + b[i]
+
+    total_model_outputs_test[i] = total_model_outputs_test_i/(normalizations[i].item())
+
+
+train_outputs = torch.argmax(total_model_outputs_train, dim=0)
+test_outputs = torch.argmax(total_model_outputs_test, dim=0)
+
+test_correct = (test_outputs == test_correct_outputs).float()
+train_correct = (train_outputs == epoch_train_correct_outputs).float()
+
+test_total_correct = torch.sum(test_correct).item()
+train_total_correct = torch.sum(train_correct).item()
+
+train_average_accuracy = train_total_correct/training_batch_size
+test_average_accuracy = test_total_correct/test_set_size
+
+
 print("FINAL RESULTS:")
-
-
-# TODO: implement final result calculation
-#loss = 0
-#accuracy = 0
-#with torch.no_grad():
-#    model.eval()
-#
-#    inputs, labels = mnist_train_dataset[:]
-#    losses = compute_model_loss(model, loss_function, inputs, labels)
-#
-#    loss = torch.sum(losses)
-#    accuracy = compute_model_accuracy(model, mnist_test_dataset)
-#
-#print(f"Loss: {loss:0.5f}\taccuracy: {accuracy:0.4f}")
+print(f"Loss: {loss:0.5f}\ttrain_accuracy: {train_average_accuracy:0.4f}\ttest_accuracy: {test_average_accuracy:0.4f}")
 
 
 end_time = time.time()

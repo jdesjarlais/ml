@@ -15,8 +15,8 @@ from torch.utils.data import Dataset, DataLoader
 
 ######### SETTINGS #########
 should_train = True
-learning_rate = 0.001
-epochs = 10
+learning_rate = 0.01
+epochs = 100
 
 training_set_size = 60000
 test_set_size = 10000
@@ -196,12 +196,57 @@ class BasicFeedForwardModel(torch.nn.Module):
     def __init__(self, input_size, output_size):
         super(BasicFeedForwardModel, self).__init__()
 
+
+        # model 1
+        #   - basically logistic regression with soft max
+#        self.layers = torch.nn.Sequential(
+#            torch.nn.Linear(input_size, output_size),
+#            torch.nn.Softmax(1)
+#        )
+
+
+        # model 2
+        #   - single hidden layer
+#        self.layers = torch.nn.Sequential(
+#            torch.nn.Linear(input_size, 28),
+#            torch.nn.Sigmoid(),
+#            torch.nn.Linear(28, output_size),
+#            torch.nn.Softmax(1)
+#        )
+
+
+        # model 3
+        #   - exponential decay by factor of 2
+        #   - 2 hidden layer
         self.layers = torch.nn.Sequential(
-            torch.nn.Linear(input_size, 28),
+            torch.nn.Linear(input_size, 196),
             torch.nn.Sigmoid(),
-            torch.nn.Linear(28, output_size),
-            torch.nn.Softmax(0)
+            torch.nn.Linear(196, 49),
+            torch.nn.Sigmoid(),
+            torch.nn.Linear(49, output_size),
+            torch.nn.Softmax(1)
         )
+
+
+        # model 4
+        #   - exponential decay by factor of 2
+        #   - 5 hidden layer
+#        self.layers = torch.nn.Sequential(
+#            torch.nn.Linear(input_size, 392),
+#            torch.nn.Sigmoid(),
+#            torch.nn.Linear(392, 196),
+#            torch.nn.Sigmoid(),
+#            torch.nn.Linear(196, 98),
+#            torch.nn.Sigmoid(),
+#            torch.nn.Linear(98, 49),
+#            torch.nn.Sigmoid(),
+#            torch.nn.Linear(49, 24),
+#            torch.nn.Sigmoid(),
+#            torch.nn.Linear(24, output_size),
+#            torch.nn.Softmax(1)
+#        )
+
+
 
     def forward(self, x):
         return self.layers(x)
@@ -297,6 +342,7 @@ if use_saved_model:
 
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.01, amsgrad=False)
+optimizer = torch.optim.Adamax(model.parameters(), lr=learning_rate, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
 #optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
 
